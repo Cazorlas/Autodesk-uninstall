@@ -73,6 +73,7 @@ function ConvertTo-AdskPackage {
             ProductCode = $productCode
             Exe = $split.Exe
             Arguments = $split.Arguments
+            HasQuietCommand = (-not [string]::IsNullOrWhiteSpace($Row.QuietUninstallString))
             ThirdParty = (-not [string]::IsNullOrWhiteSpace($Row.Publisher) -and $Row.Publisher -notmatch 'Autodesk')
             Group = $group
             Role = $role

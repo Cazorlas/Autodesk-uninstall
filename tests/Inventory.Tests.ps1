@@ -2,6 +2,15 @@ Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
 . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
 
 Describe 'Inventory contract' {
+    It 'records whether the selected command came from QuietUninstallString' {
+        $row = @(Get-FixtureRows)[0]
+        $row.UninstallString = '"C:\Vendor\uninstall.exe"'
+        $row.QuietUninstallString = '"C:\Vendor\uninstall.exe" --silent'
+        (ConvertTo-AdskPackage $row).HasQuietCommand | Should Be $true
+        $row.QuietUninstallString = $null
+        (ConvertTo-AdskPackage $row).HasQuietCommand | Should Be $false
+    }
+
     It '01 splits an unquoted executable path with spaces' {
         $result = Split-AdskCommand 'C:\Program Files\Autodesk\AdODIS\V1\Installer.exe -i uninstall --trigger_point system -m C:\ProgramData\x.xml'
         $result.Exe | Should BeExactly 'C:\Program Files\Autodesk\AdODIS\V1\Installer.exe'
