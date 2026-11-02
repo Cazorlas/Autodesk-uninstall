@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>AutodeskCleaner progress</title>
+<style>body{font-family:Segoe UI,sans-serif;max-width:900px;margin:24px auto;padding:0 16px}
+.e{border:1px solid #ccc;border-radius:6px;padding:12px;margin:12px 0}td{padding:2px 8px;vertical-align:top}</style></head>
+<body><h1>AutodeskCleaner - progress board</h1>
+<div class="e" id="adsk-cleaner"><h2>AutodeskCleaner v1 (collab 20261102-153410-adsk-cleaner)</h2>
+<table>
+<tr><td>2026-11-02</td><td>Plan: analysis of reference tool (Codex), design contract docs/DESIGN.md, fixture from host ARP (163 rows).</td></tr>
+<tr><td>T1</td><td>Inventory + plan: accepted (23 tests; A fixed Invoke-AdskProcess wait/exit code, MSI busy check, material library order).</td></tr>
+<tr><td>T2</td><td>Executor: accepted (host dry run: real ODIS/MSI commands, ARP unchanged).</td></tr>
+<tr><td>T3</td><td>Remnant cleanup + reinstall readiness: accepted after per-user MSI false-positive fix (host: 0 findings).</td></tr>
+<tr><td>T4</td><td>Launcher, menu, flow, README (VI): accepted; read-only modes allowed without admin.</td></tr>
+<tr><td>T6</td><td>Fix: Autodesk root InstallLocation no longer widens process scope (would have closed Revit 2024 + AutoCAD); D: install folders now remnants; third-party add-ins do not block cleanup. 106 tests.</td></tr>
+<tr><td>T8</td><td>Fix: AutoCAD/Navisworks folders from no-command registrations (acad.exe now detected, D: remnants found); folders holding an installed service binary never quarantined (Licensing/ODIS/Desktop Connector); reg.exe path form; Desktop Connector synthetic tests. 124 tests, PS 5.1.</td></tr>
+<tr><td>VM</td><td>Real uninstall + reinstall test in a Hyper-V VM: pending (owner sets up VM; Hyper-V not enabled on host).</td></tr>
+</table></div>
+</body></html>
