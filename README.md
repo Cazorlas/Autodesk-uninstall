@@ -18,6 +18,18 @@ So với công cụ tham chiếu được phân tích trong [tài liệu thiết
 | Giữ dữ liệu người dùng | Chỉ chọn cấu hình/add-in khi có `-IncludeUserData`; không đụng workspace Desktop Connector `DC`/`ACCDocs`. |
 | Giữ Windows an toàn | Không xóa toàn bộ TEMP, cache Windows Installer, FLEXlm, runtime VC++/.NET/WebView2, cờ reboot hay PendingFileRenameOperations; không dùng Win32_Product. |
 
+## Chạy bằng npx
+
+Cần Node.js 18 trở lên trên máy Windows:
+
+```powershell
+npx @cazorlas/autodesk-cleaner            # mở menu (hỏi UAC)
+npx @cazorlas/autodesk-cleaner -Scan      # chỉ quét, không cần admin
+npx @cazorlas/autodesk-cleaner -Readiness # kiểm tra sẵn sàng cài lại, không cần admin
+npx @cazorlas/autodesk-cleaner -Group Revit -Year 2025          # xem trước (DryRun)
+npx @cazorlas/autodesk-cleaner -Group Revit -Year 2025 -Execute # gỡ thật
+```
+
 ## Chạy bằng nhấp đúp
 
 `-All` giữ lại Licensing/ODIS khi không có entry gỡ cài đặt hoặc dịch vụ của chúng vẫn được đăng ký (thư mục chứa binary dịch vụ không được dọn). Đây là chủ ý để việc cài lại tiếp tục hoạt động.

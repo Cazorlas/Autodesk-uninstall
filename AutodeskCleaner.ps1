@@ -1,8 +1,11 @@
 ﻿param(
-    [switch]$Scan, [switch]$Readiness, [string[]]$Group, [int[]]$Year,
+    [switch]$Scan, [switch]$Readiness, [string[]]$Group, [string[]]$Year,
     [switch]$All, [switch]$Execute, [switch]$IncludeUserData,
     [switch]$IncludeThirdParty, [switch]$Yes
 )
+# -File (the .bat / npx launcher) passes "Revit,AutoCAD" and "2024,2025" as one string each.
+$Group = @($Group | ForEach-Object { $_ -split '[,;\s]+' } | Where-Object { $_ })
+$Year = [int[]]@($Year | ForEach-Object { $_ -split '[,;\s]+' } | Where-Object { $_ })
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
