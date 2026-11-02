@@ -60,21 +60,32 @@ function Get-AdskRemnantCatalog {
     }
 }
 
+function ConvertTo-AdskNormalizedPath {
+    param([string]$Path)
+    $normalized = [Environment]::ExpandEnvironmentVariables($Path.Trim()) -replace '\\+', '\'
+    if ($normalized -match '^[A-Za-z]:\\') { $normalized = [IO.Path]::GetFullPath($normalized) }
+    $normalized.TrimEnd('\')
+}
+
+function Test-AdskProtectedRoot {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $true }
+    $normalized = ConvertTo-AdskNormalizedPath -Path $Path
+    if ($normalized -match '^[A-Za-z]:$' -or
+        $normalized -match '^[A-Za-z]:\\(?:Program Files(?: \(x86\))?|ProgramData|Users(?:\\[^\\]+(?:\\AppData\\(?:Roaming|Local))?)?)$' -or
+        $normalized -match '(?:^|\\)(?:Autodesk|Autodesk Shared|Common Files)$') { return $true }
+    if ($env:USERPROFILE -and $normalized -eq (ConvertTo-AdskNormalizedPath -Path $env:USERPROFILE)) { return $true }
+    return $false
+}
+
 function Assert-AdskRemnantPath {
     param([string]$Path)
     if ($Path -match '^HKCU:\\Software\\Autodesk\\Revit\\Autodesk Revit 20\d\d$') { return }
     if ($Path -notmatch '^[A-Za-z]:\\' -or $Path -match '[%*?]' -or $Path -match '(?:^|\\)\.\.(?:\\|$)') {
         throw "Unsafe remnant path: $Path"
     }
-    $normalized = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    $roots = @('%ProgramFiles%\Autodesk', '%ProgramFiles(x86)%\Autodesk',
-        '%ProgramFiles%\Common Files\Autodesk Shared', '%ProgramFiles(x86)%\Common Files\Autodesk Shared',
-        '%ProgramData%\Autodesk', '%APPDATA%\Autodesk', '%LOCALAPPDATA%\Autodesk', '%USERPROFILE%')
-    if ($normalized -match '^[A-Za-z]:$') { throw "Unsafe remnant root: $Path" }
-    foreach ($root in $roots) {
-        $expanded = [Environment]::ExpandEnvironmentVariables($root).TrimEnd('\')
-        if ($normalized -eq $expanded) { throw "Unsafe remnant root: $Path" }
-    }
+    $normalized = ConvertTo-AdskNormalizedPath -Path $Path
+    if (Test-AdskProtectedRoot -Path $normalized) { throw "Unsafe remnant root: $Path" }
     foreach ($workspace in @('DC', 'ACCDocs')) {
         $protected = "$env:USERPROFILE\$workspace"
         if ($normalized -eq $protected -or $normalized.StartsWith($protected + '\', [StringComparison]::OrdinalIgnoreCase)) {
@@ -85,26 +96,39 @@ function Assert-AdskRemnantPath {
 
 function Get-AdskRemnant {
     param([AllowEmptyCollection()][object[]]$Packages = @(), [AllowEmptyCollection()][object[]]$Removed = @(),
-        [switch]$IncludeUserData, [switch]$InfrastructureRemoved)
+        [switch]$IncludeUserData, [switch]$InfrastructureRemoved,
+        [AllowEmptyCollection()][object[]]$RemovedPackages = @())
     $catalog = @(Get-AdskRemnantCatalog -InfrastructureRemoved:$InfrastructureRemoved -Packages $Packages)
+    foreach ($package in $RemovedPackages) {
+        if (-not @($Removed | Where-Object { $_.Group -eq $package.Group -and $_.Year -eq $package.Year }).Count) { continue }
+        if (Test-AdskProtectedRoot -Path $package.InstallLocation) { continue }
+        $catalog += [pscustomobject]@{ Path = (ConvertTo-AdskNormalizedPath -Path $package.InstallLocation)
+            Kind = 'Folder'; Group = $package.Group; Year = $package.Year; UserData = $false
+            Reason = 'install location of removed package' }
+    }
+    $seen = @{}
     foreach ($item in $catalog) {
         Assert-AdskRemnantPath $item.Path
+        $item.Path = ConvertTo-AdskNormalizedPath -Path $item.Path
+        if ($seen.ContainsKey($item.Path)) { continue }
         if ($item.Group -eq 'Infrastructure') {
             if (-not $InfrastructureRemoved -or @($Packages).Count -gt 0) { continue }
         } else {
             if (-not @($Removed | Where-Object { $_.Group -eq $item.Group -and $_.Year -eq $item.Year }).Count) { continue }
-            if (@($Packages | Where-Object { $_.Group -eq $item.Group -and $_.Year -eq $item.Year }).Count) { continue }
+            if (@($Packages | Where-Object {
+                $_.Group -eq $item.Group -and $_.Year -eq $item.Year -and -not $_.ThirdParty -and $_.Role -ne 'DevTool'
+            }).Count) { continue }
         }
         if ($item.UserData -and -not $IncludeUserData) { continue }
         $inUse = $false
         foreach ($package in $Packages) {
-            if ([string]::IsNullOrWhiteSpace($package.InstallLocation)) { continue }
-            $installed = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($package.InstallLocation)).TrimEnd('\')
+            if (Test-AdskProtectedRoot -Path $package.InstallLocation) { continue }
+            $installed = ConvertTo-AdskNormalizedPath -Path $package.InstallLocation
             $candidate = $item.Path.TrimEnd('\')
             if ($installed -eq $candidate -or $installed.StartsWith($candidate + '\', [StringComparison]::OrdinalIgnoreCase) -or
                 $candidate.StartsWith($installed + '\', [StringComparison]::OrdinalIgnoreCase)) { $inUse = $true; break }
         }
-        if (-not $inUse -and (Test-AdskPath -Path $item.Path)) { $item }
+        if (-not $inUse -and (Test-AdskPath -Path $item.Path)) { $seen[$item.Path] = $true; $item }
     }
 }
 
@@ -134,9 +158,11 @@ function Invoke-AdskRemnantCleanup {
         $errorText = $null
         try {
             Assert-AdskRemnantPath $item.Path
-            # Only catalog entries can enter the write path; never accept arbitrary registry keys or roots.
+            # Accept catalog entries and guarded install-location folders; registry keys still require the catalog.
             $allowed = @(Get-AdskRemnantCatalog -InfrastructureRemoved)
-            if (-not @($allowed | Where-Object { $_.Path -eq $item.Path -and $_.Kind -eq $item.Kind }).Count) { throw 'Path is not a catalog remnant.' }
+            if (-not @($allowed | Where-Object { (ConvertTo-AdskNormalizedPath -Path $_.Path) -eq (ConvertTo-AdskNormalizedPath -Path $item.Path) -and $_.Kind -eq $item.Kind }).Count -and
+                -not ($item.Kind -eq 'Folder' -and $item.Reason -eq 'install location of removed package' -and
+                    -not $item.UserData)) { throw 'Path is not a catalog remnant.' }
             $destination = Get-AdskQuarantineDestination -Path $item.Path -RunId $RunId -QuarantineRoot $QuarantineRoot
             if ($DryRun) { $action = 'DryRun' }
             else {

@@ -134,3 +134,156 @@ Describe 'T3 quarantine writes' {
         Assert-MockCalled Move-AdskItem -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly
     }
 }
+
+Describe 'T6 protected roots on every drive' {
+    It 'protects roots after trimming, expanding variables and collapsing separators' {
+        foreach ($path in @('D:\Program Files\Autodesk', 'D:\Program Files\Autodesk\',
+            'D:\Program Files\Autodesk\\', 'C:\Program Files (x86)\Common Files\Autodesk Shared',
+            'E:\', 'D:\Program Files', 'D:\Program Files (x86)', 'D:\ProgramData', 'D:\Users',
+            'D:\Users\owner', 'D:\Users\owner\AppData\Roaming', 'D:\Users\owner\AppData\Local',
+            'D:\Common Files', '  D:\Program Files\Autodesk\\  ', '%USERPROFILE%')) {
+            Test-AdskProtectedRoot -Path $path | Should Be $true
+        }
+    }
+
+    It 'allows product folders with trailing or doubled separators' {
+        foreach ($path in @('D:\Program Files\Autodesk\Revit 2025\',
+            'D:\Program Files\Autodesk\\Carbon Insights for Revit 2024\')) {
+            Test-AdskProtectedRoot -Path $path | Should Be $false
+        }
+    }
+
+    It 'keeps the catalog root guard effective on another drive' {
+        Mock Get-AdskRemnantCatalog { [pscustomobject]@{ Path = 'D:\Program Files\Autodesk\\'; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false } } -ModuleName AutodeskCleaner
+        { Get-AdskRemnant -Removed @(@{ Group = 'Revit'; Year = 2025 }) } | Should Throw
+    }
+}
+
+Describe 'T6 removed install locations' {
+    BeforeEach {
+        $removed = @(@{ Group = 'Revit'; Year = 2025 })
+        $package = [pscustomobject]@{ Group = 'Revit'; Year = 2025; InstallLocation = 'D:\Program Files\Autodesk\\Revit 2025\' }
+        Mock Test-AdskPath { $Path -eq 'D:\Program Files\Autodesk\Revit 2025' } -ModuleName AutodeskCleaner
+    }
+
+    It 'finds one normalized install folder on D with the required metadata' {
+        $items = @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package, $package))
+        $items.Count | Should Be 1
+        $items[0].Path | Should BeExactly 'D:\Program Files\Autodesk\Revit 2025'
+        $items[0].Kind | Should BeExactly 'Folder'
+        $items[0].Reason | Should BeExactly 'install location of removed package'
+        $items[0].UserData | Should Be $false
+    }
+
+    It 'ignores protected install roots without throwing' {
+        $package.InstallLocation = 'D:\Program Files\Autodesk\\'
+        @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package)).Count | Should Be 0
+    }
+
+    It 'requires both the removed group-year and an existing folder' {
+        @(Get-AdskRemnant -RemovedPackages @($package)).Count | Should Be 0
+        Mock Test-AdskPath { $false } -ModuleName AutodeskCleaner
+        @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package)).Count | Should Be 0
+    }
+
+    It 'protects equal, parent and child locations of remaining packages' {
+        foreach ($location in @('D:\Program Files\Autodesk\Revit 2025\',
+            'D:\Program Files\Autodesk\\Revit 2025\AddIns\X\')) {
+            $remaining = @([pscustomobject]@{ Group = 'Other'; Year = $null; InstallLocation = $location })
+            @(Get-AdskRemnant -Packages $remaining -Removed $removed -RemovedPackages @($package)).Count | Should Be 0
+        }
+    }
+
+    It 'protects a child of a remaining product folder' {
+        $package.InstallLocation = 'D:\Program Files\Autodesk\Revit 2025\Product'
+        Mock Test-AdskPath { $Path -eq 'D:\Program Files\Autodesk\Revit 2025\Product' } -ModuleName AutodeskCleaner
+        $remaining = @([pscustomobject]@{ Group = 'Other'; Year = $null; InstallLocation = 'D:\Program Files\Autodesk\Revit 2025\' })
+        @(Get-AdskRemnant -Packages $remaining -Removed $removed -RemovedPackages @($package)).Count | Should Be 0
+    }
+
+    It 'ignores protected remaining roots when selecting a removed product folder' {
+        foreach ($location in @('D:\Program Files\Autodesk', 'D:\Program Files\Autodesk\\', 'D:\Program Files')) {
+            $remaining = @([pscustomobject]@{ Group = 'Revit'; Year = 2024; InstallLocation = $location })
+            $items = @(Get-AdskRemnant -Packages $remaining -Removed $removed -RemovedPackages @($package))
+            $items.Count | Should Be 1
+            $items[0].Path | Should BeExactly 'D:\Program Files\Autodesk\Revit 2025'
+        }
+    }
+
+    It 'does not confuse neighboring product folder names' {
+        $remaining = @([pscustomobject]@{ Group = 'Other'; Year = $null; InstallLocation = 'D:\Program Files\Autodesk\Revit 20250' })
+        @(Get-AdskRemnant -Packages $remaining -Removed $removed -RemovedPackages @($package)).Count | Should Be 1
+    }
+
+    It 'deduplicates normalized catalog and package locations' {
+        Mock Get-AdskRemnantCatalog { [pscustomobject]@{ Path = 'D:\Program Files\Autodesk\\Revit 2025\'; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false; Reason = 'Product fully uninstalled' } } -ModuleName AutodeskCleaner
+        @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package)).Count | Should Be 1
+    }
+
+    It 'accepts a normalized catalog folder when previewing quarantine' {
+        Mock Get-AdskRemnantCatalog { [pscustomobject]@{ Path = 'D:\Program Files\Autodesk\\Revit 2025\'; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false; Reason = 'Product fully uninstalled' } } -ModuleName AutodeskCleaner
+        $items = @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package))
+        $result = Invoke-AdskRemnantCleanup -Remnant $items -RunId t6 -DryRun
+        $result.Action | Should BeExactly 'DryRun'
+        $result.Destination | Should BeExactly 'D:\AutodeskCleaner.Quarantine\t6\Program Files\Autodesk\Revit 2025'
+        [string]$result.Error | Should BeExactly ''
+    }
+
+    It 'previews quarantine on the product drive without any write' {
+        $items = @(Get-AdskRemnant -Removed $removed -RemovedPackages @($package))
+        Mock New-AdskDirectory {} -ModuleName AutodeskCleaner
+        Mock Move-AdskItem {} -ModuleName AutodeskCleaner
+        $result = Invoke-AdskRemnantCleanup -Remnant $items -RunId t6 -DryRun
+        $result.Action | Should BeExactly 'DryRun'
+        $result.Destination | Should BeExactly 'D:\AutodeskCleaner.Quarantine\t6\Program Files\Autodesk\Revit 2025'
+        Assert-MockCalled New-AdskDirectory -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly
+        Assert-MockCalled Move-AdskItem -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly
+    }
+}
+
+Describe 'T6 third-party and developer-tool remnants' {
+    BeforeEach {
+        $removed = @(@{ Group = 'Revit'; Year = 2025 })
+        $removedPackage = [pscustomobject]@{ Group = 'Revit'; Year = 2025; InstallLocation = 'D:\Program Files\Autodesk\Revit 2025\' }
+        $remainingPackage = [pscustomobject]@{ Group = 'Revit'; Year = 2025; ThirdParty = $true; Role = 'Main'; InstallLocation = 'C:\Program Files\NREL\X\' }
+        Mock Test-AdskPath { $true } -ModuleName AutodeskCleaner
+        Mock Get-AdskRemnantCatalog {
+            [pscustomobject]@{ Path = "$env:ProgramData\Autodesk\RVT 2025"; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false; Reason = 'Product fully uninstalled' }
+        } -ModuleName AutodeskCleaner
+    }
+
+    It 'allows catalog and install-location remnants when a third-party package of the same group-year remains' {
+        $items = @(Get-AdskRemnant -Packages @($remainingPackage) -Removed $removed -RemovedPackages @($removedPackage))
+        $items.Count | Should Be 2
+        @($items | Where-Object { $_.Path -eq "$env:ProgramData\Autodesk\RVT 2025" }).Count | Should Be 1
+        @($items | Where-Object { $_.Path -eq 'D:\Program Files\Autodesk\Revit 2025' }).Count | Should Be 1
+    }
+
+    It 'also ignores a DevTool without a third-party publisher for the group-year gate' {
+        $remainingPackage.ThirdParty = $false
+        $remainingPackage.Role = 'DevTool'
+        $items = @(Get-AdskRemnant -Packages @($remainingPackage) -Removed $removed -RemovedPackages @($removedPackage))
+        $items.Count | Should Be 2
+    }
+
+    It 'still blocks the group-year when an Autodesk product remains' {
+        $remainingPackage.ThirdParty = $false
+        @(Get-AdskRemnant -Packages @($remainingPackage) -Removed $removed -RemovedPackages @($removedPackage)).Count | Should Be 0
+    }
+
+    It 'protects third-party and DevTool folders and their parents and children in both candidate sources' {
+        Mock Get-AdskRemnantCatalog {
+            foreach ($path in @('C:\Program Files\NREL\X', 'C:\Program Files\NREL', 'C:\Program Files\NREL\X\AddIns')) {
+                [pscustomobject]@{ Path = $path; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false; Reason = 'Product fully uninstalled' }
+            }
+        } -ModuleName AutodeskCleaner
+        foreach ($role in @('Main', 'DevTool')) {
+            $remainingPackage.ThirdParty = $role -eq 'Main'
+            $remainingPackage.Role = $role
+            foreach ($path in @('C:\Program Files\NREL\X', 'C:\Program Files\NREL', 'C:\Program Files\NREL\X\AddIns')) {
+                $removedPackage.InstallLocation = $path
+                @(Get-AdskRemnant -Packages @($remainingPackage) -Removed $removed -RemovedPackages @($removedPackage)).Count | Should Be 0
+            }
+        }
+    }
+}

@@ -30,8 +30,17 @@
     $remnants = @()
     $cleanup = @()
     $aborted = $false
-    $running = @($plan.Steps.Package.InstallLocation | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        Sort-Object -Unique | ForEach-Object { Get-AdskProcessByPath -Path ([Environment]::ExpandEnvironmentVariables($_)) } | Sort-Object Id -Unique)
+    $probePaths = @($plan.Steps.Package.InstallLocation | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { ConvertTo-AdskNormalizedPath -Path $_ } | Sort-Object -Unique | Where-Object {
+            $candidate = $_
+            $inUse = @(foreach ($kept in $plan.Kept) {
+                if (Test-AdskProtectedRoot -Path $kept.Package.InstallLocation) { continue }
+                $installed = ConvertTo-AdskNormalizedPath -Path $kept.Package.InstallLocation
+                if ($installed -eq $candidate -or $installed.StartsWith($candidate + '\', [StringComparison]::OrdinalIgnoreCase)) { $kept }
+            }).Count -gt 0
+            -not (Test-AdskProtectedRoot -Path $candidate) -and -not $inUse
+        })
+    $running = @($probePaths | ForEach-Object { Get-AdskProcessByPath -Path $_ } | Sort-Object Id -Unique)
     if ($running.Count) {
         $running | Select-Object Id, Path | Format-Table -AutoSize | Out-Host
         if (-not (& $Confirm 'Đóng các tiến trình trong thư mục sản phẩm được chọn?')) {
@@ -48,10 +57,23 @@
             $pair = $_
             -not @($result.FailedGroups | Where-Object { $_.Group -eq $pair.Group -and $_.Year -eq $pair.Year }).Count
         })
+        $removedPackages = @()
+        if (-not $Execute) {
+            $removedPackages = @($plan.Steps.Package)
+            # Preview the inventory after the planned removals, without changing the host.
+            $remaining = @($plan.Kept | ForEach-Object { $_.Package }) + @($plan.Skipped | ForEach-Object { $_.Package })
+        } else {
+            $removedPackages = @($result.Steps | Where-Object {
+                $stepResult = $_
+                $package = $stepResult.Step.Package
+                $stepResult.Status -in @('Succeeded', 'AlreadyGone') -and
+                    @($removed | Where-Object { $_.Group -eq $package.Group -and $_.Year -eq $package.Year }).Count -gt 0
+            } | ForEach-Object { $_.Step.Package })
+        }
         # A timed-out installer may still be running; do not move its files.
         if (-not $result.Stopped) {
             $infra = $plan.SharedRemoved -and @($result.FailedGroups).Count -eq 0 -and $remaining.Count -eq 0
-            $remnants = @(Get-AdskRemnant -Packages $remaining -Removed $removed -IncludeUserData:$IncludeUserData -InfrastructureRemoved:$infra)
+            $remnants = @(Get-AdskRemnant -Packages $remaining -Removed $removed -RemovedPackages $removedPackages -IncludeUserData:$IncludeUserData -InfrastructureRemoved:$infra)
             Write-Host 'Phần dư có thể chuyển vào quarantine:'
             $remnants | Format-Table Path, Kind, Group, Year, UserData -AutoSize | Out-Host
             if ($remnants.Count -and (& $Confirm 'Chuyển phần dư đã liệt kê vào quarantine?')) {
