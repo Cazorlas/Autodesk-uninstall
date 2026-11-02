@@ -9,7 +9,7 @@ Describe 'T3 remnant selection' {
 
     It '01 selects only fully removed 2025 non-user paths while 2024 remains' {
         $items = @(Get-AdskRemnant -Packages $remaining -Removed $removed)
-        $items.Count | Should Be 3
+        $items.Count | Should Be 6
         @($items | Where-Object { $_.Year -ne 2025 -or $_.UserData }).Count | Should Be 0
         @($items | Where-Object { $_.Path -eq "$env:ProgramData\Autodesk\RVT 2025" }).Count | Should Be 1
     }
@@ -56,7 +56,7 @@ Describe 'T3 remnant selection' {
 
     It 'covers all required product catalogs' {
         $catalog = @(Get-AdskRemnantCatalog -Year 2025)
-        @($catalog | Where-Object Group -eq Revit).Count | Should Be 8
+        @($catalog | Where-Object Group -eq Revit).Count | Should Be 11
         @($catalog | Where-Object Group -eq AutoCAD).Count | Should Be 4
         @($catalog | Where-Object Group -eq Navisworks).Count | Should Be 6
         @($catalog | Where-Object Group -eq DesktopConnector).Count | Should Be 2
