@@ -1,4 +1,4 @@
-# Autodesk Cleaner
+﻿# Autodesk Cleaner
 
 Công cụ Windows PowerShell 5.1 giúp gỡ sản phẩm Autodesk theo nhóm/năm, kiểm tra phần dư và phát hiện các mục chặn cài lại. Luôn bắt đầu ở **DryRun ON**. Công cụ dùng bộ gỡ đã đăng ký của hãng; không bảo đảm mọi bộ cài hỏng đều sửa được.
 
@@ -20,13 +20,15 @@ So với công cụ tham chiếu được phân tích trong [tài liệu thiết
 
 ## Chạy bằng nhấp đúp
 
+`-All` giữ lại Licensing/ODIS khi không có entry gỡ cài đặt hoặc dịch vụ của chúng vẫn được đăng ký (thư mục chứa binary dịch vụ không được dọn). Đây là chủ ý để việc cài lại tiếp tục hoạt động.
+
 1. Giải nén toàn bộ thư mục, giữ `src` cạnh `AutodeskCleaner.ps1`.
 2. Nhấp đúp `Start-AutodeskCleaner.bat`, chấp nhận UAC. Script từ chối chạy nếu thiếu quyền quản trị.
 3. Chọn **1** để quét, **2** để kiểm tra cài lại, **3** để chọn nhóm và năm bằng các số phân cách dấu phẩy, **4** để chọn toàn bộ (hỏi xác nhận lần hai).
 4. Đọc trạng thái DryRun trên đầu menu. **5** bật/tắt xem trước. Khi OFF, mỗi lần gỡ/sửa thật phải nhập chính xác `GO`.
 5. Đọc kế hoạch Steps, Kept, Skipped, SharedRemoved. Xác nhận đóng ứng dụng và chuyển phần dư nếu được hỏi. **6** mở log/quarantine; **0** thoát.
 
-Đóng công việc và lưu mô hình trước khi cho phép đóng ứng dụng. DryRun vẫn ghi log/báo cáo, nhưng không gỡ, dừng tiến trình, sửa registry hay chuyển phần dư. Vì inventory không đổi trong DryRun, phần dư của sản phẩm còn cài sẽ không được đề xuất. Thư mục log mặc định: `%ProgramData%\AutodeskCleaner\Logs\yyyyMMdd-HHmmss`; có transcript và `summary.txt` cho flow gỡ. Báo cáo ghi kết quả từng bước, cleanup và readiness. Cùng một giây có thể dùng chung thư mục log.
+Đóng công việc và lưu mô hình trước khi cho phép đóng ứng dụng. DryRun vẫn ghi log/báo cáo, nhưng không gỡ, dừng tiến trình, sửa registry hay chuyển phần dư. Trong DryRun, phần dư được dự kiến từ các gói đã chọn; các gói được giữ lại vẫn chặn dọn thư mục. Thư mục log mặc định: `%ProgramData%\AutodeskCleaner\Logs\yyyyMMdd-HHmmss`; có transcript và `summary.txt` cho flow gỡ. Báo cáo ghi kết quả từng bước, cleanup và readiness. Cùng một giây có thể dùng chung thư mục log.
 
 ## Chạy bằng tham số
 

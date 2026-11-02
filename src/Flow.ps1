@@ -23,14 +23,18 @@
     $plan.Steps | Select-Object Order, @{n='Product';e={$_.Package.DisplayName}}, Action, Reason | Format-Table -AutoSize | Out-Host
     foreach ($section in @('Kept', 'Skipped')) {
         Write-Host "${section}:"
-        $plan.$section | Select-Object @{n='Product';e={$_.Package.DisplayName}}, Reason | Format-Table -AutoSize | Out-Host
+        foreach ($entry in $plan.$section) {
+            Write-Host ('{0} | {1}' -f $entry.Package.DisplayName, $entry.Reason)
+        }
     }
     Write-Host "SharedRemoved: $($plan.SharedRemoved) | DryRun: $(-not $Execute)"
     $result = $null
     $remnants = @()
     $cleanup = @()
     $aborted = $false
-    $probePaths = @($plan.Steps.Package.InstallLocation | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    $selectedNoCommand = @($plan.Skipped | Where-Object { $_.Package.Kind -eq 'None' } | ForEach-Object { $_.Package })
+    $selectedPackages = @($plan.Steps | ForEach-Object { $_.Package }) + $selectedNoCommand
+    $probePaths = @($selectedPackages.InstallLocation | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
         ForEach-Object { ConvertTo-AdskNormalizedPath -Path $_ } | Sort-Object -Unique | Where-Object {
             $candidate = $_
             $inUse = @(foreach ($kept in $plan.Kept) {
@@ -53,22 +57,29 @@
     if (-not $aborted) {
         $result = Invoke-AdskRemovalPlan -Plan $plan -LogDir $logDir -DryRun:(-not $Execute)
         $remaining = @(Get-AdskPackage)
-        $removed = @($plan.Steps.Package | Select-Object Group, Year -Unique | Where-Object {
+        $removed = @($selectedPackages | Select-Object Group, Year -Unique | Where-Object {
             $pair = $_
             -not @($result.FailedGroups | Where-Object { $_.Group -eq $pair.Group -and $_.Year -eq $pair.Year }).Count
         })
         $removedPackages = @()
+        $removedNoCommand = @($selectedNoCommand | Where-Object {
+            $package = $_
+            $groupSucceeded = @($removed | Where-Object { $_.Group -eq $package.Group -and $_.Year -eq $package.Year }).Count -gt 0
+            $groupSucceeded -and (-not $Execute -or @($remaining | Where-Object { $_.Id -eq $package.Id }).Count -eq 0)
+        })
         if (-not $Execute) {
-            $removedPackages = @($plan.Steps.Package)
+            $removedPackages = @($plan.Steps.Package) + $removedNoCommand
             # Preview the inventory after the planned removals, without changing the host.
-            $remaining = @($plan.Kept | ForEach-Object { $_.Package }) + @($plan.Skipped | ForEach-Object { $_.Package })
+            $remaining = @($plan.Kept | ForEach-Object { $_.Package }) + @($plan.Skipped | Where-Object {
+                $removedNoCommand.Id -notcontains $_.Package.Id
+            } | ForEach-Object { $_.Package })
         } else {
             $removedPackages = @($result.Steps | Where-Object {
                 $stepResult = $_
                 $package = $stepResult.Step.Package
                 $stepResult.Status -in @('Succeeded', 'AlreadyGone') -and
                     @($removed | Where-Object { $_.Group -eq $package.Group -and $_.Year -eq $package.Year }).Count -gt 0
-            } | ForEach-Object { $_.Step.Package })
+            } | ForEach-Object { $_.Step.Package }) + $removedNoCommand
         }
         # A timed-out installer may still be running; do not move its files.
         if (-not $result.Stopped) {

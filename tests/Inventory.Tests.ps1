@@ -1,4 +1,4 @@
-Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
+﻿Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
 . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
 
 Describe 'Inventory contract' {
@@ -140,5 +140,15 @@ Describe 'Inventory contract' {
             $command = Get-Command $name -Module AutodeskCleaner
             $command.Name | Should BeExactly $name
         }
+    }
+}
+
+Describe 'T8 Desktop Connector inventory' {
+    It 'classifies a synthetic Autodesk Desktop Connector MSI without a year' {
+        $row = [pscustomobject]@{ Hive = 'HKLM'; View = '64'; KeyName = '{11111111-2222-3333-4444-555555555555}'; DisplayName = 'Autodesk Desktop Connector'; DisplayVersion = '16.0'; Publisher = 'Autodesk'; UninstallString = 'MsiExec.exe /X{11111111-2222-3333-4444-555555555555}'; QuietUninstallString = $null; SystemComponent = 0; InstallLocation = 'C:\Program Files\Autodesk\Desktop Connector' }
+        $package = ConvertTo-AdskPackage $row
+        $package.Group | Should BeExactly 'DesktopConnector'
+        ($null -eq $package.Year) | Should Be $true
+        $package.Kind | Should BeExactly 'MSI'
     }
 }

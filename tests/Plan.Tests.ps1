@@ -1,4 +1,4 @@
-Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
+﻿Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
 . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
 
 Describe 'Removal plan contract' {
@@ -104,5 +104,20 @@ Describe 'Removal plan contract' {
         { New-AdskRemovalPlan -Packages $packages } | Should Throw
         { New-AdskRemovalPlan -Packages $packages -All -Group Revit } | Should Throw
         { New-AdskRemovalPlan -Packages $packages -All -Year 2025 } | Should Throw
+    }
+}
+
+Describe 'T8 Desktop Connector removal plan' {
+    It 'selects Desktop Connector without Shared or Infrastructure while another product stays' {
+        $rows = Get-Content (Join-Path $PSScriptRoot 'fixtures/arp-host.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $packages = @($rows | ForEach-Object { $_ } | ConvertTo-AdskPackage)
+        $row = [pscustomobject]@{ Hive = 'HKLM'; View = '64'; KeyName = '{11111111-2222-3333-4444-555555555555}'; DisplayName = 'Autodesk Desktop Connector'; DisplayVersion = '16.0'; Publisher = 'Autodesk'; UninstallString = 'MsiExec.exe /X{11111111-2222-3333-4444-555555555555}'; QuietUninstallString = $null; SystemComponent = 0; InstallLocation = 'C:\Program Files\Autodesk\Desktop Connector' }
+        $packages += ConvertTo-AdskPackage $row
+        $plan = New-AdskRemovalPlan -Packages $packages -Group DesktopConnector
+        $plan.Steps.Count | Should Be 1
+        $plan.Steps[0].Package.DisplayName | Should BeExactly 'Autodesk Desktop Connector'
+        ($null -eq $plan.Steps[0].Package.Year) | Should Be $true
+        @($plan.Steps | Where-Object { $_.Package.Group -in @('Shared', 'Infrastructure') }).Count | Should Be 0
+        $plan.SharedRemoved | Should Be $false
     }
 }

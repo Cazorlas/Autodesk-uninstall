@@ -56,6 +56,9 @@ function Move-AdskItem {
 
 function Export-AdskRegistryKey {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Destination)
+    $Path = $Path -replace '^(?:Microsoft\.PowerShell\.Core\\)?Registry::', ''
+    $Path = $Path -replace '^HKEY_CURRENT_USER', 'HKCU' -replace '^HKEY_LOCAL_MACHINE', 'HKLM'
+    $Path = $Path -replace '^(HKCU|HKLM):?\\', '$1\'
     & reg.exe export $Path $Destination /y
     if ($LASTEXITCODE -ne 0) { throw "Registry export failed (exit $LASTEXITCODE): $Path" }
 }

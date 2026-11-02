@@ -2,6 +2,7 @@
 
 Describe 'T3 remnant selection' {
     BeforeEach {
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
         Mock Test-AdskPath { $true } -ModuleName AutodeskCleaner
         $removed = @(@{ Group = 'Revit'; Year = 2025 })
         $remaining = @([pscustomobject]@{ Group = 'Revit'; Year = 2024; InstallLocation = $null })
@@ -38,7 +39,9 @@ Describe 'T3 remnant selection' {
     It '04 gates all infrastructure on the flag and an empty inventory' {
         @(Get-AdskRemnant -Removed @(@{ Group = 'Infrastructure'; Year = $null })).Count | Should Be 0
         @(Get-AdskRemnant -InfrastructureRemoved -Packages $remaining).Count | Should Be 0
-        @(Get-AdskRemnant -InfrastructureRemoved).Count | Should Be 7
+        @(Get-AdskRemnant -InfrastructureRemoved -RemovedPackages @(
+            [pscustomobject]@{ Group = 'Infrastructure'; Kind = 'Exe'; DisplayName = 'Autodesk Licensing' },
+            [pscustomobject]@{ Group = 'Infrastructure'; Kind = 'ODIS'; DisplayName = 'Autodesk ODIS' })).Count | Should Be 7
     }
 
     It 'returns only existing paths' {
@@ -64,6 +67,7 @@ Describe 'T3 remnant selection' {
 }
 
 Describe 'T3 root guard' {
+    BeforeEach { Mock Get-AdskService { @() } -ModuleName AutodeskCleaner }
     It '05 throws if a catalog entry resolves to an Autodesk root' {
         Mock Get-AdskRemnantCatalog { [pscustomobject]@{ Path = "$env:ProgramData\Autodesk"; Kind = 'Folder'; Group = 'Revit'; Year = 2025; UserData = $false } } -ModuleName AutodeskCleaner
         { Get-AdskRemnant -Removed @(@{ Group = 'Revit'; Year = 2025 }) } | Should Throw
@@ -72,6 +76,7 @@ Describe 'T3 root guard' {
 
 Describe 'T3 quarantine writes' {
     BeforeEach {
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
         Mock Test-AdskPath { $false } -ModuleName AutodeskCleaner
         Mock New-AdskDirectory {} -ModuleName AutodeskCleaner
         Mock Move-AdskItem {} -ModuleName AutodeskCleaner
@@ -136,6 +141,7 @@ Describe 'T3 quarantine writes' {
 }
 
 Describe 'T6 protected roots on every drive' {
+    BeforeEach { Mock Get-AdskService { @() } -ModuleName AutodeskCleaner }
     It 'protects roots after trimming, expanding variables and collapsing separators' {
         foreach ($path in @('D:\Program Files\Autodesk', 'D:\Program Files\Autodesk\',
             'D:\Program Files\Autodesk\\', 'C:\Program Files (x86)\Common Files\Autodesk Shared',
@@ -161,6 +167,7 @@ Describe 'T6 protected roots on every drive' {
 
 Describe 'T6 removed install locations' {
     BeforeEach {
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
         $removed = @(@{ Group = 'Revit'; Year = 2025 })
         $package = [pscustomobject]@{ Group = 'Revit'; Year = 2025; InstallLocation = 'D:\Program Files\Autodesk\\Revit 2025\' }
         Mock Test-AdskPath { $Path -eq 'D:\Program Files\Autodesk\Revit 2025' } -ModuleName AutodeskCleaner
@@ -243,6 +250,7 @@ Describe 'T6 removed install locations' {
 
 Describe 'T6 third-party and developer-tool remnants' {
     BeforeEach {
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
         $removed = @(@{ Group = 'Revit'; Year = 2025 })
         $removedPackage = [pscustomobject]@{ Group = 'Revit'; Year = 2025; InstallLocation = 'D:\Program Files\Autodesk\Revit 2025\' }
         $remainingPackage = [pscustomobject]@{ Group = 'Revit'; Year = 2025; ThirdParty = $true; Role = 'Main'; InstallLocation = 'C:\Program Files\NREL\X\' }
@@ -285,5 +293,80 @@ Describe 'T6 third-party and developer-tool remnants' {
                 @(Get-AdskRemnant -Packages @($remainingPackage) -Removed $removed -RemovedPackages @($removedPackage)).Count | Should Be 0
             }
         }
+    }
+}
+
+Describe 'T8 service-owned folders and Desktop Connector remnants' {
+    BeforeEach {
+        Mock Test-AdskPath { $true } -ModuleName AutodeskCleaner
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
+    }
+
+    It 'keeps Licensing and ODIS without evidence of an uninstall entry' {
+        $items = @(Get-AdskRemnant -InfrastructureRemoved)
+        @($items | Where-Object { $_.Path -match '\\(?:AdODIS|ODIS|AdskLicensing|AdskLicensingService)$' }).Count | Should Be 0
+    }
+
+    It 'keeps Licensing when its registered service binary is still inside even after uninstall evidence' {
+        Mock Get-AdskService {
+            [pscustomobject]@{ Name = 'AdskLicensingService'; PathName = ('"' + ${env:ProgramFiles(x86)} + '\Common Files\Autodesk Shared\AdskLicensing\Current\AdskLicensingService\AdskLicensingService.exe" --service') }
+        } -ModuleName AutodeskCleaner
+        $items = @(Get-AdskRemnant -InfrastructureRemoved -RemovedPackages @([pscustomobject]@{ Group = 'Infrastructure'; Kind = 'Exe'; DisplayName = 'Autodesk Licensing' }))
+        @($items | Where-Object { $_.Path -eq "${env:ProgramFiles(x86)}\Common Files\Autodesk Shared\AdskLicensing" }).Count | Should Be 0
+    }
+
+    It 'keeps the Desktop Connector catalog folder while its service remains' {
+        Mock Get-AdskService {
+            [pscustomobject]@{ Name = 'DesktopConnectorService'; PathName = ('"' + $env:ProgramFiles + '\Autodesk\Desktop Connector\DesktopConnectorService.exe" --service') }
+        } -ModuleName AutodeskCleaner
+        $items = @(Get-AdskRemnant -Removed @(@{ Group = 'DesktopConnector'; Year = $null }) -IncludeUserData)
+        @($items | Where-Object Path -eq "$env:ProgramFiles\Autodesk\Desktop Connector").Count | Should Be 0
+        @($items | Where-Object UserData).Count | Should Be 1
+    }
+
+    It 'protects install-location folders using unquoted service paths with arguments and normalized casing' {
+        Mock Get-AdskService {
+            [pscustomobject]@{ Name = 'CustomService'; PathName = 'd:\program files\autodesk\custom connector\bin\service.exe --service' }
+            [pscustomobject]@{ Name = 'EmptyService'; PathName = $null }
+        } -ModuleName AutodeskCleaner
+        $package = [pscustomobject]@{ Group = 'DesktopConnector'; Year = $null; InstallLocation = 'D:\Program Files\Autodesk\Custom Connector\' }
+        $items = @(Get-AdskRemnant -Removed @(@{ Group = 'DesktopConnector'; Year = $null }) -RemovedPackages @($package))
+        @($items | Where-Object Path -eq 'D:\Program Files\Autodesk\Custom Connector').Count | Should Be 0
+        $package.InstallLocation = 'D:\Program Files\Autodesk\Custom Connect'
+        $items = @(Get-AdskRemnant -Removed @(@{ Group = 'DesktopConnector'; Year = $null }) -RemovedPackages @($package))
+        @($items | Where-Object Path -eq 'D:\Program Files\Autodesk\Custom Connect').Count | Should Be 1
+    }
+
+    It 'never selects Desktop Connector workspaces even with IncludeUserData' {
+        $items = @(Get-AdskRemnant -Removed @(@{ Group = 'DesktopConnector'; Year = $null }) -IncludeUserData)
+        $items.Count | Should Be 2
+        @($items | Where-Object { $_.Path -like "$env:USERPROFILE\DC*" -or $_.Path -like "$env:USERPROFILE\ACCDocs*" }).Count | Should Be 0
+        foreach ($workspace in @('DC', 'ACCDocs')) {
+            $package = [pscustomobject]@{ Group = 'DesktopConnector'; Year = $null; InstallLocation = "$env:USERPROFILE\$workspace" }
+            { Get-AdskRemnant -Removed @(@{ Group = 'DesktopConnector'; Year = $null }) -RemovedPackages @($package) -IncludeUserData } | Should Throw
+        }
+    }
+}
+
+Describe 'T8 registry export wrapper native paths' {
+    BeforeEach {
+        $global:T8RegCalls = @()
+        Mock reg.exe { $global:T8RegCalls += ,@($args); $global:LASTEXITCODE = 0 } -ModuleName AutodeskCleaner
+    }
+
+    It 'normalizes short and long registry provider roots for reg.exe' {
+        foreach ($path in @('HKCU:\Software\X', 'HKEY_CURRENT_USER:\Software\X', 'Registry::HKEY_CURRENT_USER\Software\X', 'HKCU\Software\X')) {
+            Export-AdskRegistryKey -Path $path -Destination 'X.reg'
+        }
+        $global:T8RegCalls.Count | Should Be 4
+        foreach ($call in $global:T8RegCalls) { ($call -join '|') | Should BeExactly 'export|HKCU\Software\X|X.reg|/y' }
+    }
+
+    It 'normalizes HKLM and fully qualified registry provider paths' {
+        foreach ($path in @('HKLM:\Software\X', 'HKEY_LOCAL_MACHINE\Software\X', 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE:\Software\X')) {
+            Export-AdskRegistryKey -Path $path -Destination 'X.reg'
+        }
+        $global:T8RegCalls.Count | Should Be 3
+        foreach ($call in $global:T8RegCalls) { ($call -join '|') | Should BeExactly 'export|HKLM\Software\X|X.reg|/y' }
     }
 }

@@ -1,5 +1,7 @@
 ﻿Import-Module (Join-Path $PSScriptRoot '../src/AutodeskCleaner.psm1') -Force
 
+$script:t8OriginalRemnant = (Get-Command Get-AdskRemnant -Module AutodeskCleaner).ScriptBlock
+
 Describe 'T4 flow contract' {
     BeforeEach {
         $global:FlowPackages = @(
@@ -155,5 +157,100 @@ Describe 'T6 flow path and remnant scope' {
             $null = Invoke-AdskCleanerFlow -Group Revit -Year 2025 -Execute -LogRoot $TestDrive -Confirm { $false }
         }
         Assert-MockCalled Get-AdskRemnant -ModuleName AutodeskCleaner -Scope It -Times 4 -Exactly -ParameterFilter { @($RemovedPackages).Count -eq 0 }
+    }
+}
+
+Describe 'T8 selected no-command packages in flow' {
+    BeforeEach {
+        $rows = Get-Content (Join-Path $PSScriptRoot 'fixtures/arp-host.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $global:T8Packages = @($rows | ForEach-Object { $_ } | ConvertTo-AdskPackage)
+        $global:T8Remaining = @()
+        $global:T8Reads = 0
+        $global:T8Failed = @()
+        $global:T8RemnantImplementation = $script:t8OriginalRemnant
+        Mock Start-Transcript {} -ModuleName AutodeskCleaner
+        Mock Stop-Transcript {} -ModuleName AutodeskCleaner
+        Mock Get-AdskPackage {
+            $global:T8Reads++
+            if ($global:T8Reads -eq 1) { $global:T8Packages } else { $global:T8Remaining }
+        } -ModuleName AutodeskCleaner
+        Mock Get-AdskProcessByPath { @() } -ModuleName AutodeskCleaner
+        Mock Get-AdskService { @() } -ModuleName AutodeskCleaner
+        Mock Test-AdskPath { $true } -ModuleName AutodeskCleaner
+        # Pester 3 keeps It-defined mocks in the Describe scope; restore the real selection on every case.
+        Mock Get-AdskRemnant {
+            & $global:T8RemnantImplementation -Packages $Packages -Removed $Removed -RemovedPackages $RemovedPackages -IncludeUserData:$IncludeUserData -InfrastructureRemoved:$InfrastructureRemoved
+        } -ModuleName AutodeskCleaner
+        Mock Invoke-AdskRemovalPlan {
+            [pscustomobject]@{
+                Steps = @($Plan.Steps | ForEach-Object { [pscustomobject]@{ Step = $_; Status = 'Succeeded' } })
+                FailedGroups = $global:T8Failed; Stopped = $false; RebootRequired = $false
+            }
+        } -ModuleName AutodeskCleaner
+        Mock Test-AdskReinstallReadiness { @() } -ModuleName AutodeskCleaner
+    }
+
+    It 'probes AutoCAD from skipped registrations and never probes the Autodesk root or Revit' {
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Get-AdskProcessByPath -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter { $Path -eq 'D:\Program Files\Autodesk\AutoCAD 2024' }
+        Assert-MockCalled Get-AdskProcessByPath -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly -ParameterFilter { $Path -eq 'D:\Program Files\Autodesk' -or $Path -match 'Revit' }
+    }
+
+    It 'probes both skipped Navisworks product locations' {
+        $null = Invoke-AdskCleanerFlow -Group Navisworks -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        foreach ($folder in @('Navisworks Manage 2024', 'Navisworks Exporters 2024')) {
+            Assert-MockCalled Get-AdskProcessByPath -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter { $Path -eq ('D:\Program Files\Autodesk\' + $folder) }
+        }
+        Assert-MockCalled Get-AdskProcessByPath -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly -ParameterFilter { $Path -eq 'D:\Program Files\Autodesk' -or $Path -match 'Revit' }
+    }
+
+    It 'passes a disappeared no-command registration as removed after execution' {
+        Mock Get-AdskRemnant { @() } -ModuleName AutodeskCleaner
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -Execute -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Get-AdskRemnant -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter {
+            @($RemovedPackages | Where-Object { $_.DisplayName -eq 'AutoCAD 2024 - English' -and $_.Kind -eq 'None' }).Count -eq 1
+        }
+    }
+
+    It 'returns the disappeared AutoCAD registration install location as a remnant' {
+        $summary = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -Execute -LogRoot $TestDrive -Confirm { $false }
+        @($summary.Remnants | Where-Object Path -eq 'D:\Program Files\Autodesk\AutoCAD 2024').Count | Should Be 1
+    }
+
+    It 'keeps a no-command registration that survives a real uninstall' {
+        $global:T8Remaining = @($global:T8Packages | Where-Object DisplayName -eq 'AutoCAD 2024 - English')
+        $summary = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -Execute -LogRoot $TestDrive -Confirm { $false }
+        @($summary.Remnants | Where-Object Path -eq 'D:\Program Files\Autodesk\AutoCAD 2024').Count | Should Be 0
+    }
+
+    It 'projects selected no-command packages as removed in preview' {
+        Mock Get-AdskRemnant { @() } -ModuleName AutodeskCleaner
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Get-AdskRemnant -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter {
+            @($RemovedPackages | Where-Object DisplayName -eq 'AutoCAD 2024 - English').Count -eq 1 -and
+            @($Packages | Where-Object DisplayName -eq 'AutoCAD 2024 - English').Count -eq 0
+        }
+    }
+
+    It 'keeps failed group no-command registrations in preview' {
+        $global:T8Failed = @([pscustomobject]@{ Group = 'AutoCAD'; Year = 2024 })
+        Mock Get-AdskRemnant { @() } -ModuleName AutodeskCleaner
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Get-AdskRemnant -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter {
+            @($RemovedPackages | Where-Object DisplayName -eq 'AutoCAD 2024 - English').Count -eq 0 -and
+            @($Packages | Where-Object DisplayName -eq 'AutoCAD 2024 - English').Count -eq 1
+        }
+    }
+
+    It 'does not probe a skipped location shared with a kept package or its parent' {
+        $global:T8Packages += [pscustomobject]@{ Id = 'kept-child'; DisplayName = 'Other product'; Kind = 'MSI'; Group = 'Other'; Year = 2025; Role = 'Main'; ThirdParty = $false; InstallLocation = 'D:\Program Files\Autodesk\AutoCAD 2024\AddIns\X' }
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Get-AdskProcessByPath -ModuleName AutodeskCleaner -Scope It -Times 0 -Exactly -ParameterFilter { $Path -eq 'D:\Program Files\Autodesk\AutoCAD 2024' }
+    }
+
+    It 'prints skipped display names and reasons to the host' {
+        Mock Write-Host {} -ModuleName AutodeskCleaner
+        $null = Invoke-AdskCleanerFlow -Group AutoCAD -Year 2024 -LogRoot $TestDrive -Confirm { $false }
+        Assert-MockCalled Write-Host -ModuleName AutodeskCleaner -Scope It -Times 1 -Exactly -ParameterFilter { $Object -like '*AutoCAD 2024 - English*No uninstall command*' }
     }
 }

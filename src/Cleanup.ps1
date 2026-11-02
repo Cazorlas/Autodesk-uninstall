@@ -99,6 +99,10 @@ function Get-AdskRemnant {
         [switch]$IncludeUserData, [switch]$InfrastructureRemoved,
         [AllowEmptyCollection()][object[]]$RemovedPackages = @())
     $catalog = @(Get-AdskRemnantCatalog -InfrastructureRemoved:$InfrastructureRemoved -Packages $Packages)
+    $serviceExecutables = @(foreach ($service in Get-AdskService) {
+        $exe = (Split-AdskCommand -Command $service.PathName).Exe
+        if (-not [string]::IsNullOrWhiteSpace($exe)) { ConvertTo-AdskNormalizedPath -Path $exe }
+    })
     foreach ($package in $RemovedPackages) {
         if (-not @($Removed | Where-Object { $_.Group -eq $package.Group -and $_.Year -eq $package.Year }).Count) { continue }
         if (Test-AdskProtectedRoot -Path $package.InstallLocation) { continue }
@@ -113,6 +117,13 @@ function Get-AdskRemnant {
         if ($seen.ContainsKey($item.Path)) { continue }
         if ($item.Group -eq 'Infrastructure') {
             if (-not $InfrastructureRemoved -or @($Packages).Count -gt 0) { continue }
+            # No ARP uninstall evidence means these reinstall-critical components stay in place.
+            $component = $null
+            if ($item.Path -match '\\(?:AdODIS|ODIS)$') { $component = 'ODIS|Autodesk Installer' }
+            elseif ($item.Path -match '\\(?:AdskLicensing|AdskLicensingService)$') { $component = 'Licensing' }
+            if ($component -and -not @($RemovedPackages | Where-Object {
+                $_.Group -eq 'Infrastructure' -and $_.Kind -ne 'None' -and $_.DisplayName -match $component
+            }).Count) { continue }
         } else {
             if (-not @($Removed | Where-Object { $_.Group -eq $item.Group -and $_.Year -eq $item.Year }).Count) { continue }
             if (@($Packages | Where-Object {
@@ -120,6 +131,9 @@ function Get-AdskRemnant {
             }).Count) { continue }
         }
         if ($item.UserData -and -not $IncludeUserData) { continue }
+        if ($item.Kind -eq 'Folder' -and @($serviceExecutables | Where-Object {
+            $_.StartsWith($item.Path + '\', [StringComparison]::OrdinalIgnoreCase)
+        }).Count) { continue }
         $inUse = $false
         foreach ($package in $Packages) {
             if (Test-AdskProtectedRoot -Path $package.InstallLocation) { continue }
