@@ -1,6 +1,6 @@
 {
   "name": "@cazorlas/autodesk-cleaner",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safe Autodesk uninstaller for Windows (Revit, AutoCAD, Navisworks, Desktop Connector...) that keeps a fresh reinstall working: vendor uninstallers, dependency order, quarantine instead of delete, reinstall-readiness check.",
   "bin": {
     "autodesk-cleaner": "bin/autodesk-cleaner.js"
